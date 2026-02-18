@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>pf_localization</name>
+  <version>0.1.0</version>
+  <description>Minimal-change ROS 2 port of PFLocalization.py for a single fixed RSSI node.</description>
+  <maintainer email="you@example.com">Your Name</maintainer>
+  <license>MIT</license>
+  <export><build_type>ament_python</build_type></export>
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+</package>

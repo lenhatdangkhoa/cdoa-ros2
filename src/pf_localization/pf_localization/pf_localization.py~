@@ -1,0 +1,338 @@
+#!/usr/bin/env python3
+import math
+import random
+import time
+from datetime import datetime
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+import rclpy
+from rclpy.node import Node
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+
+from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
+from std_msgs.msg import Float32
+
+# Try to import custom messages if you have them in ROS 2
+try:
+    from network_analysis.msg import WirelessLink  # optional
+    HAS_WIRELESSLINK = True
+except Exception:
+    HAS_WIRELESSLINK = False
+
+# If you have a Robot_Pos equivalent in ROS 2, you can re-enable it similarly
+# try:
+#     from robot_msgs.msg import RobotPos as Robot_Pos  # adjust if needed
+#     HAS_ROBOT_POS = True
+# except Exception:
+#     HAS_ROBOT_POS = False
+
+
+def quaternion_to_yaw(x, y, w, z):
+    # identical to your original helper
+    t0 = 2.0 * (w * z + x * y)
+    t1 = 1.0 - 2.0 * (y * y + z * z)
+    yaw = math.atan2(t0, t1)
+    return yaw
+
+
+DT = 0.1  # same timestep used in your motion model
+def motion_model(x, u):
+    F = np.array([[1.0, 0, 0],
+                  [0, 1.0, 0],
+                  [0, 0, 1.0]])
+    B = np.array([[DT * math.cos(x[2]), 0],
+                  [DT * math.sin(x[2]), 0],
+                  [0.0, DT]])
+    xd = F.dot(x) + B.dot(u)
+    return xd
+
+
+def dist(x, y, pos):
+    return math.sqrt((pos[0]-x)**2 + (pos[1]-y)**2)
+
+
+# Free-space term (kept from your original code; minor jitter)
+rss0 = 20 * math.log10(3 / (4 * math.pi * 2.4 * 10))
+rss0 = rss0 - 2 * random.random()
+
+# Map size; anchors
+areaSize = (2.34, 1.75)
+
+# ***** ONE fixed node for testing (put your actual fixed-node coordinates here) *****
+node_pos = [(0.0, 0.0)]
+
+
+def gen_wifi(freq=2.4, power=20, trans_gain=0, recv_gain=0, size=areaSize, pos=(5, 5),
+             shadow_dev=2, n=3, noise=2):
+    """Single-anchor synthetic RSS generator (kept very close to your original)."""
+    if pos is None:
+        pos = (random.randrange(int(size[0]) + 1), random.randrange(int(size[1]) + 1))
+
+    # NOTE: You seeded on each call originally; keeping that behavior for minimal change.
+    random.seed(datetime.now())
+
+    normal_dist = np.random.normal(0, shadow_dev, size=[int(size[0]) + 1, int(size[1]) + 1])
+    rss = []
+
+    for x in range(0, len(node_pos)):
+        distance = dist(node_pos[x][0], node_pos[x][1], pos)
+        base = rss0 - 10 * n * math.log10(distance) if distance != 0 else rss0
+        val = base + normal_dist[int(pos[0])][int(pos[1])]
+        rss.append(val - noise * random.random())
+    return rss
+
+
+class RecorderRSSIOdom(Node):
+    """ROS 2 port of your recorder_rssi_odom, trimmed to 1 RSSI source and Odom."""
+
+    # keep your field names for minimal change
+    temp_step = 0
+    temp_stamp_sec = 0
+    temp_stamp_nsec = 0
+    robot_pos_x = 0.0
+    robot_pos_y = 0.0
+    robot_odom_x = 0.0
+    robot_odom_y = 0.0
+    robot_odom_w = 0.0
+    robot_pos_w = 0.0
+    vel_x = 0.0
+    vel_y = 0.0
+    vel_w = 0.0
+    rssi1 = 0.0
+    lqi1 = 0.0
+    noise1 = 0.0
+    status1 = False
+
+    log_on_file = False
+
+    def __init__(self):
+        super().__init__('pf_localization_single_anchor')
+
+        # Parameters so you can point at your real topics
+        self.declare_parameter('rssi_topic', '/node1/network_analysis/wireless_quality')
+        self.declare_parameter('rssi_float_topic', '/node1/network_analysis/wireless_quality/rssi')
+        self.declare_parameter('odom_topic', '/odom')
+        self.declare_parameter('cmd_vel_topic', '/cmd_vel')
+
+        rssi_topic = self.get_parameter('rssi_topic').get_parameter_value().string_value
+        rssi_float_topic = self.get_parameter('rssi_float_topic').get_parameter_value().string_value
+        odom_topic = self.get_parameter('odom_topic').get_parameter_value().string_value
+        cmd_vel_topic = self.get_parameter('cmd_vel_topic').get_parameter_value().string_value
+
+        qos = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10
+        )
+
+        # One RSSI source:
+        if HAS_WIRELESSLINK:
+            self.create_subscription(WirelessLink, rssi_topic, self.rssi1_cb_wireless, qos)
+        else:
+            # fallback: std_msgs/Float32 carrying dBm directly
+            self.create_subscription(Float32, rssi_float_topic, self.rssi1_cb_float, qos)
+
+        self.create_subscription(Odometry, odom_topic, self.odom_callback, qos)
+        self.create_subscription(Twist, cmd_vel_topic, self.vel_callback, qos)
+
+        self.get_logger().info('pf_localization_single_anchor node started')
+
+    # --- Callbacks ---
+
+    def rssi1_cb_wireless(self, data):
+        # match your original field names
+        self.temp_step = data.header.seq
+        self.temp_stamp_sec = data.header.stamp.sec
+        self.temp_stamp_nsec = data.header.stamp.nanosec
+        self.rssi1 = data.rssi
+        self.lqi1 = getattr(data, 'lqi', 0.0)
+        self.noise1 = getattr(data, 'noise', 0.0)
+        self.status1 = getattr(data, 'status', False)
+        self.log_on_file = True
+
+    def rssi1_cb_float(self, data: Float32):
+        # if you publish RSSI as Float32 dBm
+        self.rssi1 = float(data.data)
+        # fabricate a header-ish tick
+        now = self.get_clock().now().to_msg()
+        self.temp_step += 1
+        self.temp_stamp_sec = now.sec
+        self.temp_stamp_nsec = now.nanosec
+        self.log_on_file = True
+
+    def odom_callback(self, data: Odometry):
+        self.robot_odom_x = data.pose.pose.position.x
+        self.robot_odom_y = data.pose.pose.position.y
+        # only w & z are needed for yaw
+        self.robot_odom_w = data.pose.pose.orientation.w
+        self.robot_pos_x = self.robot_odom_x     # use odom as "pos" for plotting
+        self.robot_pos_y = self.robot_odom_y
+        self.robot_pos_w = self.robot_odom_w
+
+    def vel_callback(self, data: Twist):
+        self.vel_x = data.linear.x
+        self.vel_y = data.linear.y
+        self.vel_w = data.angular.z
+
+
+def localize(node: RecorderRSSIOdom):
+    """Your original PF loop, minimally changed for 1 anchor + RSS residual likelihood."""
+    initial_pos = (1.199, 0.0898)
+    possible_x = list(np.arange(0.9, 1.3, 0.05))
+    possible_y = list(np.arange(0.6, 1.0, 0.05))
+    num_particles = 1000
+
+    overall_rss = []
+    original_traj = []
+    velocity = []
+
+    plt.ion()
+    random.seed(datetime.now())
+
+    previous_errors = []
+    distance_error = []
+    particles = []
+    times = []
+    Previous_pos = initial_pos
+    start_time = time.time()
+
+    for _ in range(num_particles):
+        particles.append((random.choice(possible_x), random.choice(possible_y)))
+
+    _, plt_pos = plt.subplots(1, 1)
+    plt_pos.set_title("Localization (single anchor)")
+    plt_pos.set_xlim((-0.25, areaSize[0] + 0.25))
+    plt_pos.set_ylim((-0.25, areaSize[1] + 0.25))
+    i = 0
+
+    while rclpy.ok():
+        rclpy.spin_once(node, timeout_sec=0.01)
+
+        if node.log_on_file:
+            node.log_on_file = False
+
+            # Use odom as "ground truth"/reference
+            x = node.robot_pos_x
+            y = node.robot_pos_y
+            w = node.robot_pos_w
+            z = 0.0  # we don't use full quaternion here; kept identical to your original style
+
+            original_traj.append((x, y, w, z))
+            rss = [node.rssi1]           # *** single anchor ***
+            overall_rss.append(rss)
+            velocity.append([node.vel_x, node.vel_w])
+
+            positions = []
+            errors = []
+            weights = []
+            actual_rss_ls = []
+
+            for particle in particles:
+                px, py = particle[0], particle[1]
+
+                # Synthetic RSS at this particle (length 1)
+                actual_rss = gen_wifi(pos=(px, py), noise=0)
+
+                # Residual (predicted − measured)
+                residual = actual_rss[0] - overall_rss[i][0]
+
+                # Robust sigma: avoid zero; you can tune (2.0 dB often reasonable indoors)
+                std_error = max(1.0, abs(residual))
+
+                # Gaussian-like weight on RSS residual
+                omega = (1.0 / (std_error * math.sqrt(2 * math.pi))) * \
+                        math.exp(- (residual ** 2) / (2 * (std_error ** 2)))
+
+                # keep your temporal compounding idea; fix index variable to avoid clobbering i
+                for k in range(len(previous_errors) - 1,
+                               len(previous_errors) - 4 if len(previous_errors) > 5 else 0, -1):
+                    pe = previous_errors[k]
+                    omega *= (1.0 / (std_error * math.sqrt(2 * math.pi))) * \
+                             math.exp(- (pe ** 2) / (2 * (std_error ** 2)))
+
+                weights.append(omega)
+                positions.append((px, py))
+                errors.append(abs(residual))
+                actual_rss_ls.append(actual_rss)
+
+            sum_weight = np.sum(weights)
+            if sum_weight != 0:
+                weights = [w / sum_weight for w in weights]
+
+            # Pick best particle (MAP)
+            max_index = int(np.argmax(weights)) if sum_weight != 0 else 0
+            pos = positions[max_index]
+
+            # Regularize with odom position (kept from your approach)
+            pos = ((pos[0] + original_traj[i][0]) / 2.0, (pos[1] + original_traj[i][1]) / 2.0)
+
+            previous_errors.append(errors[max_index])
+            distance_error.append(dist(pos[0], pos[1], original_traj[i]))
+
+            # Propagate nominal state using your motion model (not fed back to particles directly)
+            pos_x = [pos[0], pos[1], original_traj[i][2]]
+            _xd = motion_model(pos_x, velocity[i])
+
+            # Resample: same style as your code (shrink, reseed near pos_x) + small y-bound fix
+            num_particles = math.ceil(num_particles / 2) if num_particles / 2 > 200 else 200
+            particles = []
+            for _ in range(num_particles):
+                particles.append((
+                    random.uniform(
+                        pos_x[0]-0.1 if pos_x[0]-0.1 >= -areaSize[0] else -areaSize[0],
+                        pos_x[0]+0.1 if pos_x[0]+0.1 <=  areaSize[0] else  areaSize[0]
+                    ),
+                    random.uniform(
+                        pos_x[1]-0.1 if pos_x[1]-0.1 >= -areaSize[1] else -areaSize[1],
+                        pos_x[1]+0.1 if pos_x[1]+0.1 <=  areaSize[1] else  areaSize[1]
+                    )
+                ))
+
+            # Plotting identical style
+            if i > 0:
+                plt_pos.plot([original_traj[i-1][0], original_traj[i][0]],
+                             [original_traj[i-1][1], original_traj[i][1]], 'g-', linewidth=2, clip_on=False)
+                plt_pos.plot([Previous_pos[0], pos[0]], [Previous_pos[1], pos[1]],
+                             'r-', linewidth=2, clip_on=False)
+
+            plt.draw()
+            plt.pause(0.0001)
+            Previous_pos = pos
+            i += 1
+
+    # on shutdown (rarely reached interactively)
+    plt.show(block=False)
+    plt.savefig('predicted_trajectory_single_anchor.png')
+    print("--- Computation Time: %s seconds ---" % (time.time() - start_time))
+    if previous_errors:
+        rsscumulativeEror = np.sum(previous_errors)
+        rssmeanError = np.average(previous_errors)
+        rssStandardDeviationError = np.std(previous_errors)
+        distcumulativeEror = np.sum(distance_error)
+        distmeanError = np.average(distance_error)
+        distStandardDeviationError = np.std(distance_error)
+        print("RSS_ERROR:   Cumulative: %.3f  Mean: %.3f  Std: %.3f" %
+              (rsscumulativeEror, rssmeanError, rssStandardDeviationError))
+        print("DIST_ERROR:  Cumulative: %.3f  Mean: %.3f  Std: %.3f" %
+              (distcumulativeEror, distmeanError, distStandardDeviationError))
+    plt.pause(1.0)
+    plt.clf()
+    plt.close()
+
+
+def main():
+    rclpy.init()
+    node = RecorderRSSIOdom()
+    try:
+        localize(node)
+    except KeyboardInterrupt:
+        pass
+    node.destroy_node()
+    rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
