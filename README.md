@@ -71,9 +71,13 @@ This includes:
 
 ## Localization Demo
 
-Click the preview to open the sped-up video:
+Localization results for three motion patterns:
 
-[![Localization Demo (3x)](localization_3x.gif)](localization_3x.mp4)
+| Figure-8 | Circle | Random |
+|---|---|---|
+| ![Figure-8 trajectory](8.png) | ![Circle trajectory](circle.png) | ![Random trajectory](random.png) |
+
+If the images do not appear, make sure `8.png`, `circle.png`, and `random.png` are in the repository root.
 
 ## Documentation Map
 
