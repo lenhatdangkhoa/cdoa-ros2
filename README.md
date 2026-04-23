@@ -69,7 +69,7 @@ This includes:
 - Running `ros2_network_analysis`
 - Launching `pf_localization` from either robot
 
-## Localization Demo (3x Speed)
+## Localization Demo
 
 Click the preview to open the sped-up video:
 
