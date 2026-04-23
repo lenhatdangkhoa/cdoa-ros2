@@ -82,7 +82,7 @@ class recorder_rssi_odom(Node):
         self.sub_rssi = self.create_subscription(WirelessLink, '/node2/network_analysis/wireless_quality', self.rssi2_callback, qos)
         self.sub_rssi = self.create_subscription(WirelessLink, '/node3/network_analysis/wireless_quality', self.rssi3_callback, qos)
         self.sub_rssi = self.create_subscription(WirelessLink, '/node4/network_analysis/wireless_quality', self.rssi4_callback, qos)
-        self.sub_odom = self.create_subscription(Odometry, '/odometry/wheels', self.odom_callback, qos)
+        self.sub_odom = self.create_subscription(Odometry, '/odometry/filtered', self.odom_callback, qos)
         self.sub_vel = self.create_subscription(Twist, '/cmd_vel', self.vel_callback, qos)
         #self.sub_pos = self.create_subscription(Robot_Pos, '/positions', self.pos_callback, qos)
 
@@ -198,11 +198,11 @@ rss0 = 20 * math.log10(3 / (4 * math.pi * 2.4 * 10))
 rss0 = rss0-2*random.random()
 print(rss0)
 #areaSize=(2.34, 1.75)
-areaSize=(100, 100)
+areaSize=(3.048, 3.96)
 
 
 #node_pos=[(0,0),(0,1.75),(2.34,1.75),(2.34,0)]
-node_pos=[(0,0),(15,0),(10,5),(0, 10)]
+node_pos=[(0,0),(0,3.048),(3.96,3.048),(3.96, 0)]
 
 def gen_wifi(freq=2.4, power=20, trans_gain=0, recv_gain=0, size=areaSize, pos=(5,5), shadow_dev=2, n=3,noise=2):
     if pos is None:
@@ -260,11 +260,13 @@ def find_doa(overall_rss,original_tragectory,i):
 
 
 
-def localize(rec):
+def localize(rec, run_tag):
 
-    initial_pos=(1.199,0.0898)
+    initial_pos=(0.05,0.05)
     possible_x = list(np.arange(0.9,1.3,0.05))
     possible_y = list(np.arange(0.6,1,0.05))
+    # possible_x = list(np.arange(0.0, areaSize[0] + 0.001, 0.05))
+    # possible_y = list(np.arange(0.0, areaSize[1] + 0.001, 0.05))
     num_particles = 1000
 
     overall_rss=[]
@@ -284,118 +286,119 @@ def localize(rec):
     start_time = time.time()
     for x in range(num_particles):
         particles.append((random.choice(possible_x),random.choice(possible_y)))
-    _ , plt_pos = plt.subplots(1,1)
+    fig, plt_pos = plt.subplots(1,1)
     plt_pos.set_title("Localization")
     # plt_pos.set_xlim((-0.25,areaSize[0]+0.25))
     # plt_pos.set_ylim((-0.25,areaSize[1]+0.25))
-    plt_pos.set_xlim((-100, 100))
-    plt_pos.set_ylim((-100, 100))
+    plt_pos.set_xlim((-10, 15))
+    plt_pos.set_ylim((-10, 15))
+    #plt_pos.set_xlim((-0.25,areaSize[0]+0.25))
+    #plt_pos.set_ylim((-0.25,areaSize[1]+0.25))
 
     #plt_pos.relim(); plt_pos.autoscale_view()
     i = 0
-    while(1):
-        # print (rec.log_on_file)
-        rclpy.spin_once(rec, timeout_sec=0.05)   # <-- add this line
+    legend_added = False
+    try:
+        while rclpy.ok():
+            try:
+                rclpy.spin_once(rec, timeout_sec=0.05)
+            except Exception as exc:
+                if 'context is not valid' in str(exc):
+                    break
+                raise
 
-        if rec.log_on_file == True:
-            rec.log_on_file = False
-            x, y, w, z = rec.robot_pos_x, rec.robot_pos_y, rec.robot_pos_w, 0
-            original_tragectory.append((x,y,w,z))
-            rss =  [rec.rssi1,rec.rssi2,rec.rssi3,rec.rssi4]
-            overall_rss.append(rss)
-            velocity.append([rec.vel_x,rec.vel_w])
-            positions =[]
-            errors=[]
-            weights =[]
-            actual_rss_ls=[]
-            error=0
-            for particle in particles:
-                x,y=particle[0],particle[1]
-                actual_rss = gen_wifi(pos=(x,y),noise=0)
-                gy = ((actual_rss[1]-actual_rss[0])/2) + ((actual_rss[2]-actual_rss[3])/2)
-                gx = ((actual_rss[2]-actual_rss[1])/2) + ((actual_rss[3]-actual_rss[0])/2)
-                adoa=np.arctan(gy/gx) if gx !=0 else 0
-                avg_doa=find_doa(overall_rss,original_tragectory,i)
-                error=abs(adoa-avg_doa)
-                # error=np.sum(np.subtract(actual_rss,overall_rss[i]))
-            
-                # std_error=1
+            if rec.log_on_file == True:
+                rec.log_on_file = False
+                x, y, w, z = rec.robot_pos_x, rec.robot_pos_y, rec.robot_pos_w, 0
+                original_tragectory.append((x,y,w,z))
+                rss =  [rec.rssi1,rec.rssi2,rec.rssi3,rec.rssi4]
+                overall_rss.append(rss)
+                velocity.append([rec.vel_x,rec.vel_w])
+                positions =[]
+                errors=[]
+                weights =[]
+                actual_rss_ls=[]
+                error=0
+                for particle in particles:
+                    x,y=particle[0],particle[1]
+                    actual_rss = gen_wifi(pos=(x,y),noise=0)
+                    gy = ((actual_rss[1]-actual_rss[0])/2) + ((actual_rss[2]-actual_rss[3])/2)
+                    gx = ((actual_rss[2]-actual_rss[1])/2) + ((actual_rss[3]-actual_rss[0])/2)
+                    adoa=np.arctan(gy/gx) if gx !=0 else 0
+                    avg_doa=find_doa(overall_rss,original_tragectory,i)
+                    error=abs(adoa-avg_doa)
 
-                std_error=np.std(np.subtract(actual_rss,overall_rss[i]))
-                omega=((1/((std_error)*math.sqrt(2*math.pi)))*(math.pow(math.e,-(math.pow(error,2)/(2*(std_error**2))))))
-                for i in range(len(previous_errors)-1,len(previous_errors)-4 if len(previous_errors) > 5 else 0,-1):
-                    omega=omega*((1/((std_error)*math.sqrt(2*math.pi)))*(math.pow(math.e,-(math.pow(previous_errors[i],2)/(2*(std_error**2))))))
-                    
-                weights.append(omega)
-                positions.append((x,y,))
-                errors.append(error)
-                actual_rss_ls.append(actual_rss)
-                
-            sum_weight=np.sum(weights)
-            if sum_weight == 0:
-                pass
-            for j in range(0,len(weights)):
-                weights[j]=weights[j]/sum_weight
+                    std_error=np.std(np.subtract(actual_rss,overall_rss[i]))
+                    omega=((1/((std_error)*math.sqrt(2*math.pi)))*(math.pow(math.e,-(math.pow(error,2)/(2*(std_error**2))))))
+                    for i in range(len(previous_errors)-1,len(previous_errors)-4 if len(previous_errors) > 5 else 0,-1):
+                        omega=omega*((1/((std_error)*math.sqrt(2*math.pi)))*(math.pow(math.e,-(math.pow(previous_errors[i],2)/(2*(std_error**2))))))
 
+                    weights.append(omega)
+                    positions.append((x,y,))
+                    errors.append(error)
+                    actual_rss_ls.append(actual_rss)
 
-            max_weight = max(weights)
-            max_index = weights.index(max_weight)
-            pos = positions[max_index]
-            pos = ((pos[0]+original_tragectory[i][0])/2,(pos[1]+original_tragectory[i][1])/2)
-            previous_errors.append(errors[max_index])
-            distance_error.append(dist(pos[0],pos[1],original_tragectory[i]))
+                sum_weight=np.sum(weights)
+                if sum_weight != 0:
+                    for j in range(0,len(weights)):
+                        weights[j]=weights[j]/sum_weight
 
+                max_weight = max(weights)
+                max_index = weights.index(max_weight)
+                pos = positions[max_index]
+                pos = ((pos[0]+original_tragectory[i][0])/2,(pos[1]+original_tragectory[i][1])/2)
+                previous_errors.append(errors[max_index])
+                distance_error.append(dist(pos[0],pos[1],original_tragectory[i]))
 
-            # print(str(pos)+"\t"+str(actual_rss_ls[max_index]))#+"\t"+str(errors[max_index])+"\t"+str(num_particles))
-            # plt_pos.plot(pos[0],pos[1],'bo',markersize=3,clip_on=False)
-            pos_x = [pos[0],pos[1],original_tragectory[i][2]]
-            xd = motion_model(pos_x,velocity[i])
-            # print(xd)
+                pos_x = [pos[0],pos[1],original_tragectory[i][2]]
+                xd = motion_model(pos_x,velocity[i])
 
-            num_particles=math.ceil(num_particles/2) if num_particles/2>200 else 200
-            particles=[]
-            for x in range(num_particles):
-                particles.append((random.uniform(pos_x[0]-0.1 if pos_x[0]-0.1 >=-areaSize[0] else -areaSize[0], pos_x[0]+0.1 if pos_x[0]+0.1 <=areaSize[0] else areaSize[0])
-                ,random.uniform(pos[1]-0.1 if pos_x[1]-0.1 >=-areaSize[1] else -areaSize[1], pos_x[1]+0.1 if pos_x[1]+0.1 <=areaSize[1] else areaSize[1])))
-            if i>0:
-                plt_pos.plot([original_tragectory[i-1][0],original_tragectory[i][0]],[original_tragectory[i-1][1],original_tragectory[i][1]],'g-',linewidth=2,clip_on=False)
-                plt_pos.plot([Previous_pos[0],pos[0]],[Previous_pos[1],pos[1]],'r-',linewidth=2,clip_on=False)
+                num_particles=math.ceil(num_particles/2) if num_particles/2>200 else 200
+                particles=[]
+                for x in range(num_particles):
+                    particles.append((random.uniform(pos_x[0]-0.1 if pos_x[0]-0.1 >=-areaSize[0] else -areaSize[0], pos_x[0]+0.1 if pos_x[0]+0.1 <=areaSize[0] else areaSize[0])
+                    ,random.uniform(pos[1]-0.1 if pos_x[1]-0.1 >=-areaSize[1] else -areaSize[1], pos_x[1]+0.1 if pos_x[1]+0.1 <=areaSize[1] else areaSize[1])))
+                if i>0:
+                    gt_label = 'Ground truth' if not legend_added else '_nolegend_'
+                    est_label = 'Estimated trajectory' if not legend_added else '_nolegend_'
+                    plt_pos.plot([original_tragectory[i-1][0],original_tragectory[i][0]],[original_tragectory[i-1][1],original_tragectory[i][1]],'g-',linewidth=2.4,clip_on=False,label=gt_label)
+                    plt_pos.plot([Previous_pos[0],pos[0]],[Previous_pos[1],pos[1]],'r-',linewidth=2,clip_on=False,label=est_label)
+                    if not legend_added:
+                        plt_pos.legend(loc='upper right')
+                        legend_added = True
 
-                # plt_error.plot([i-1,i],[distance_error[i-1],distance_error[i]],'r-')
-            plt.draw()
-            plt.pause(0.0001)
-            Previous_pos = pos
-            i+=1
-
-    
-
-    plt.show(block=False)
-    plt.savefig('predicted_trajectory_'+sys.argv[1]+'.png')
-    print("--- Computation Time: %s seconds ---" % (time.time() - start_time))
-    rsscumulativeEror=np.sum(previous_errors)
-    rssmeanError=np.average(previous_errors)
-    rssStandardDeviationError=np.std(previous_errors)
-    distcumulativeEror=np.sum(distance_error)
-    distmeanError=np.average(distance_error)
-    distStandardDeviationError=np.std(distance_error)
-    print("RSS_ERROR:   Cumulative Error: " + str(rsscumulativeEror)+"\tMean  Error: "+str(rssmeanError)+"\tStandard Deviation: "+str(rssStandardDeviationError))
-    print("DIST_ERROR:   Cumulative Error: " + str(distcumulativeEror)+"\tMean  Error: "+str(distmeanError)+"\tStandard Deviation: "+str(distStandardDeviationError))
-    # resultFile = open("error_field_"+str(NOISE_LEVEL)+"_"+str(RESOLUTION)+".csv", "a")  # append mode
-    # resultFile.write(str(rsscumulativeEror)+","+str(rssmeanError)+","+str(rssStandardDeviationError)
-    # +","+str(distcumulativeEror)+","+str(distmeanError)+","+str(distStandardDeviationError)+"\n")
-    # resultFile.close()
-    plt.pause(3)
-    plt.clf()
-    plt.close()
+                plt.draw()
+                plt.pause(0.0001)
+                Previous_pos = pos
+                i+=1
+    except KeyboardInterrupt:
+        pass
+    finally:
+        plt.show(block=False)
+        output_file = 'predicted_trajectory_' + run_tag + '.png'
+        fig.savefig(output_file)
+        print('Saved trajectory figure:', output_file)
+        print("--- Computation Time: %s seconds ---" % (time.time() - start_time))
+        if previous_errors and distance_error:
+            rsscumulativeEror=np.sum(previous_errors)
+            rssmeanError=np.average(previous_errors)
+            rssStandardDeviationError=np.std(previous_errors)
+            distcumulativeEror=np.sum(distance_error)
+            distmeanError=np.average(distance_error)
+            distStandardDeviationError=np.std(distance_error)
+            print("RSS_ERROR:   Cumulative Error: " + str(rsscumulativeEror)+"\tMean  Error: "+str(rssmeanError)+"\tStandard Deviation: "+str(rssStandardDeviationError))
+            print("DIST_ERROR:   Cumulative Error: " + str(distcumulativeEror)+"\tMean  Error: "+str(distmeanError)+"\tStandard Deviation: " + str(distStandardDeviationError))
+        plt.close(fig)
 
 
 def main(argv=None):
     rclpy.init(args=argv)
     rec = recorder_rssi_odom()
+    run_tag = argv[1] if argv is not None and len(argv) > 1 else datetime.now().strftime('%Y%m%d_%H%M%S_%f')
     try:
-        localize(rec)
+        localize(rec, run_tag)
     except KeyboardInterrupt:
-        plt.savefig('predicted_trajectory.png')
+        plt.savefig('predicted_trajectory_' + run_tag + '.png')
         pass
     rec.destroy_node()
     rclpy.shutdown()
