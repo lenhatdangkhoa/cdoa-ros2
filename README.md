@@ -69,6 +69,12 @@ This includes:
 - Running `ros2_network_analysis`
 - Launching `pf_localization` from either robot
 
+## Localization Demo (3x Speed)
+
+Click the preview to open the sped-up video:
+
+[![Localization Demo (3x)](localization_3x.gif)](localization_3x.mp4)
+
 ## Documentation Map
 
 - Workspace run guide: [src/README.md](src/README.md)
