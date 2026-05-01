@@ -67,7 +67,6 @@ ros2 launch pf_localization pf_localization.launch.py
 
 ## Multi-Robot Localization Deployment (4 Raspberry Pi 5 Nodes)
 
-This is the recommended sequence for your thesis setup where 4 wireless Raspberry Pi 5 nodes publish network data and one robot runs localization.
 
 ### 1) SSH into each wireless node
 
@@ -133,6 +132,10 @@ ros2 run ros2_network_analysis network_errors.py
 
 On MAX or the other robot terminal:
 
+**Important**: You need to run EKF localization for the filtered odometry data. Run the following command to get the topic ```odometry/filtered```
+```bash
+ros2 launch roverrobotics_driver robot_localizer.launch.py
+```
 ```bash
 source /opt/ros/jazzy/setup.bash
 source ~/cdoa-ros2/install/setup.bash
