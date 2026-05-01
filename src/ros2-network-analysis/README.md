@@ -10,7 +10,7 @@ This package provides reusable measurement nodes for:
 
 ## Package Role in This Project
 
-In this thesis workspace, this package provides the wireless/network measurements consumed by localization experiments, including PF-based localization in `pf_localization`.
+This package provides the wireless/network measurements consumed by localization experiments, including PF-based localization in `pf_localization`.
 
 ## Build
 
