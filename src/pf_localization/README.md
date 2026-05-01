@@ -2,7 +2,7 @@
 
 ROS 2 Python package for PF-based localization using wireless RSSI observations and robot motion data.
 
-This package is part of the master’s thesis implementation inspired by CDoA-based localization.
+This package is part of my master’s thesis implementation inspired by CDoA-based localization.
 
 ## What It Does
 
@@ -42,6 +42,11 @@ source install/setup.bash
 ```
 
 ## Run
+
+**Important**: You need to run EKF localization for the filtered odometry data. Run the following command to get the topic ```odometry/filtered```
+```bash
+ros2 launch roverrobotics_driver robot_localizer.launch.py
+```
 
 Launch:
 
